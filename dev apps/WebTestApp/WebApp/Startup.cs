@@ -37,8 +37,13 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Identity.Client;
 using Microsoft.IdentityModel.Clients.ActiveDirectory;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
+using AuthenticationResult = Microsoft.IdentityModel.Clients.ActiveDirectory.AuthenticationResult;
+using ClientCredential = Microsoft.IdentityModel.Clients.ActiveDirectory.ClientCredential;
+using System.Globalization;
+using Microsoft.AspNetCore.Http;
 
 namespace WebApp
 {
@@ -47,8 +52,13 @@ namespace WebApp
         public static string ClientId;
         public static string ClientSecret;
         public static string Authority;
+        public static string Authority1;
+
         public static string GraphResourceId;
         public static string TodoListResourceId;
+
+        public static string[] scopes = { "User.Read" };
+        public static ConfidentialClientApplication confidentialClient;
 
         public Startup(IHostingEnvironment env)
         {
@@ -91,6 +101,11 @@ namespace WebApp
 
             // Populate AzureAd Configuration Values
             Authority = String.Format(Configuration["AzureAd:AadInstance"], Configuration["AzureAd:Tenant"]);
+
+
+            Authority1 = String.Format(CultureInfo.InvariantCulture, Configuration["AzureAd:AadInstance1"], Configuration["AzureAd:Tenant"], "/v2.0");
+
+
             ClientId = Configuration["AzureAd:ClientId"];
             ClientSecret = Configuration["AzureAd:ClientSecret"];
             GraphResourceId = Configuration["AzureAd:GraphResourceId"];
@@ -100,20 +115,22 @@ namespace WebApp
             app.UseCookieAuthentication(new CookieAuthenticationOptions());
 
             // Configure the OWIN pipeline to use OpenID Connect auth.
-            app.UseOpenIdConnectAuthentication(new OpenIdConnectOptions
+            var authOptions = new OpenIdConnectOptions
             {
                 ClientId = ClientId,
-                Authority = Authority,
+                Authority = Authority1,
                 PostLogoutRedirectUri = Configuration["AzureAd:PostLogoutRedirectUri"],
                 ResponseType = OpenIdConnectResponseType.CodeIdToken,
                 GetClaimsFromUserInfoEndpoint = false,
-                
                 Events = new OpenIdConnectEvents
                 {
                     OnRemoteFailure = OnAuthenticationFailed,
                     OnAuthorizationCodeReceived = OnAuthorizationCodeReceived,
                 }
-            });
+            };
+            authOptions.Scope.Add(scopes[0]);
+
+            app.UseOpenIdConnectAuthentication(authOptions);
 
             // Configure MVC routes
             app.UseMvc(routes =>
@@ -128,13 +145,25 @@ namespace WebApp
         {
             // Acquire a Token for the Graph API and cache it using ADAL.  In the TodoListController, we'll use the cache to acquire a token to the Todo List API
             string userObjectId = (context.Ticket.Principal.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier"))?.Value;
-            ClientCredential clientCred = new ClientCredential(ClientId, ClientSecret);
-            AuthenticationContext authContext = new AuthenticationContext(Authority, new NaiveSessionCache(userObjectId, context.HttpContext.Session));
-            AuthenticationResult authResult = await authContext.AcquireTokenByAuthorizationCodeAsync(
-                context.ProtocolMessage.Code, new Uri(context.Properties.Items[OpenIdConnectDefaults.RedirectUriForCodePropertiesKey]), clientCred, GraphResourceId);
+            //ClientCredential clientCred = new ClientCredential(ClientId, ClientSecret);
+            /* AuthenticationContext authContext = new AuthenticationContext(Authority, new NaiveSessionCache(userObjectId, context.HttpContext.Session));
+             AuthenticationResult authResult = await authContext.AcquireTokenByAuthorizationCodeAsync(
+                 context.ProtocolMessage.Code, new Uri(context.Properties.Items[OpenIdConnectDefaults.RedirectUriForCodePropertiesKey]), clientCred, GraphResourceId);
+                 */
+            //--------------------------------------------------------------------------------
+            var cc = new Microsoft.Identity.Client.ClientCredential(Configuration["AzureAd:ClientSecret"]);
+            confidentialClient = new ConfidentialClientApplication(
+                Configuration["AzureAd:ClientId"],
+                Authority1,
+                Configuration["AzureAd:RedirectUri"],
+                cc,
+                new Microsoft.Identity.Client.TokenCache(), new Microsoft.Identity.Client.TokenCache());
+
+            var r = await confidentialClient.AcquireTokenByAuthorizationCodeAsync(context.ProtocolMessage.Code, scopes);
+            //--------------------------------------------------------------------------------
 
             // Notify the OIDC middleware that we already took care of code redemption.
-            context.HandleCodeRedemption();
+            context.HandleCodeRedemption(r.AccessToken, r.IdToken);
         }
 
         // Handle sign-in errors differently than generic errors.

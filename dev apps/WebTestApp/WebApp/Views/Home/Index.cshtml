@@ -1,3 +1,16 @@
 ﻿@{
     ViewData["Title"] = "Home Page";
+
+    @if (User.Identity.IsAuthenticated)
+    {
+        <ul >
+            <li><a asp-controller="Home" asp-action="CallGraph">Call Graph by User Credential</a></li>
+            <li><a asp-controller="Home" asp-action="CallGraphClientCredential">Call Graph by ClientCredential</a></li>
+        </ul>
+    }
+    else
+    {
+        <p> Please log in to see available api</p>
+    }
+
 }
